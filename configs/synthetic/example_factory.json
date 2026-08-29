@@ -1,0 +1,34 @@
+{
+  "name": "toy-factory",
+  "resources": {
+    "transporter": {
+      "count": 2
+    }
+  },
+  "stations": {
+    "station_a": {
+      "process_time_sec": {
+        "min": 30,
+        "max": 40
+      }
+    },
+    "station_b": {
+      "process_time_sec": {
+        "min": 35,
+        "max": 45
+      }
+    }
+  },
+  "buffers": {
+    "buffer_a": {
+      "capacity": 20
+    }
+  },
+  "demand": {
+    "jobs_per_hour": 100
+  },
+  "metadata": {
+    "source": "synthetic",
+    "note": "Synthetic configuration for integration tests only. This is not DENSO data."
+  }
+}
