@@ -12,12 +12,14 @@ Thumbs.db
 .env.*
 !.env.example
 *.secret.*
-data/
-private_data/
-raw_data/
-local_data/
-outputs/
-artifacts/
-reports/generated/
-build/
-dist/
+
+# Root-level local/private data only
+/data/
+/private_data/
+/raw_data/
+/local_data/
+
+# Generated outputs
+/outputs/
+/artifacts/
+/reports/generated/
