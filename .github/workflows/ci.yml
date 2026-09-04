@@ -19,3 +19,14 @@ jobs:
           python -m pip install -e ".[dev]"
       - name: Test
         run: pytest
+
+  cpp-decision:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake -S cpp -B cpp-build -DCMAKE_BUILD_TYPE=Release
+      - name: Build
+        run: cmake --build cpp-build --parallel
+      - name: Test
+        run: ctest --test-dir cpp-build --output-on-failure
