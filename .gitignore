@@ -23,3 +23,26 @@ Thumbs.db
 /outputs/
 /artifacts/
 /reports/generated/
+
+# Local-only agent/research material (never commit)
+/.local-agent/
+/.local-research/
+/.agent-cache/
+
+# LaTeX build artifacts (final PDF is committed intentionally)
+*.aux
+*.log
+*.out
+*.toc
+*.bbl
+*.blg
+*.fls
+*.fdb_latexmk
+*.synctex.gz
+*.bcf
+*.run.xml
+*.xdv
+/docs/decision/modeling/build/
+
+# C++ build directories (never commit build artifacts)
+/cpp-build*/

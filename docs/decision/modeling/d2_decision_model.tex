@@ -1,0 +1,960 @@
+% Build: tectonic d2_decision_model.tex  (XeLaTeX toolchain; re-runs and
+% bibtex are handled automatically). Committed PDF is regenerated from this
+% source only.
+\documentclass[11pt,a4paper]{article}
+
+\usepackage[margin=2.6cm]{geometry}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{mathtools}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{longtable}
+\usepackage{enumitem}
+\usepackage[dvipsnames]{xcolor}
+\usepackage[colorlinks=true,linkcolor=NavyBlue,citecolor=OliveGreen,urlcolor=blue]{hyperref}
+\usepackage[nameinlink,capitalise,noabbrev]{cleveref}
+\usepackage{microtype}
+
+\newcommand{\Acal}{\mathcal{A}}
+\newcommand{\Scal}{\mathcal{S}}
+\newcommand{\Hcal}{\mathcal{H}}
+\newcommand{\Eop}{\mathbb{E}}
+\newcommand{\Tset}{T^{\mathrm{ep}}}
+
+\title{\textbf{Decision Modeling for Predict--Detect--Simulate Logistics:\\
+A Pre-Factory-Tour Framework for DENSO Factory Hacks D2}\\[6pt]
+\large Constraints, Objectives, Uncertainty, and Simulation-Based Recommendation}
+\author{Ph\d{a}m Quang Minh\\[2pt]
+\small Decision/Optimization/Mathematical Modeling role, DENSO Factory Hacks 2026 D2}
+\date{September 2026}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+\noindent This report is the normative specification of the decision layer of
+the D2 system (``Simulate \& Forecast Logistics, Recommend Actions'') as it can
+be defined before any factory-specific evidence exists. The recommendation
+problem is stated over a candidate action set filtered by a three-valued
+(satisfied/violated/unknown) hard-constraint logic, evaluated through a
+discrete-event simulator under a shared scenario--seed bank, and aggregated by
+a preference rule that remains a human decision. Six candidate decision
+families, a four-class constraint taxonomy, and the simulator--optimizer
+ownership boundary are fixed; the actual family, objective, and cadence wait
+for the Factory Tour (2026-09-11). All factory-specific quantities are labeled
+synthetic or unknown, and no claim is made about DENSO's actual operations.
+A C++20 core at \texttt{cpp/} implements the feasibility semantics as the
+approved executable specification of this report.
+\end{abstract}
+
+\tableofcontents
+\newpage
+
+%======================================================================
+\section{Introduction}\label{sec:intro}
+%======================================================================
+
+The D2 competition task requires a system that predicts future logistics
+state, detects bottlenecks, simulates what-if scenarios, and recommends
+feasible, useful actions. The conceptual pipeline is
+
+\begin{center}
+\fbox{\parbox{0.95\linewidth}{\centering
+factory state / forecast $\rightarrow$ \textbf{forecast} $\rightarrow$
+\textbf{simulation + bottleneck detection} $\rightarrow$ \textbf{candidate
+actions} $\rightarrow$ \textbf{feasibility} $\rightarrow$ \textbf{simulated
+KPI outcomes} $\rightarrow$ \textbf{ranking} $\rightarrow$
+\textbf{recommendation}}}
+\end{center}
+
+This report specifies the decision layer only: given the current or forecast
+state and simulator outcomes, \emph{which feasible action should be
+recommended, and on what evidence}. Two roles are separated sharply. The
+digital-twin/simulation layer (owned by Đào Văn Đức) models physical
+evolution, event dynamics, KPI generation, and bottleneck behavior. The
+decision layer (this report) owns candidate generation, feasibility modeling,
+objective interpretation, and ranking. The decision layer never re-creates
+simulator semantics, and the simulator never selects the recommended action
+(\cref{sec:interface}).
+
+The report is deliberately written \emph{before} the Factory Tour
+(2026-09-11). Its purpose is to fix what can be modeled safely now ---
+the feasibility semantics, the constraint taxonomy, the candidate decision
+families, the objective structures, and the evaluation methodology --- and to
+make explicit which facts must come from the plant before a final
+formulation, objective, or algorithm can be chosen. Every factory-specific
+quantity in this report is synthetic (an invented development value) or
+unknown (missing information that blocks the claims depending on it); none is
+a claim about DENSO's operations.
+
+%======================================================================
+\section{Scope, Assumptions, and Provenance}\label{sec:status}
+%======================================================================
+
+Two provenance vocabularies are used, and they are not interchangeable. The
+\emph{data-parameter source types} are owned by the data layer and used
+verbatim here:
+\begin{equation}\label{eq:srcset}
+\mathcal{S}_{\mathrm{src}}
+=\{\texttt{synthetic},\ \texttt{observed},\ \texttt{estimated},\
+\texttt{assumed},\ \texttt{mentor\_confirmed},\ \texttt{system\_export}\}.
+\end{equation}
+Separately, this report attaches \emph{claim statuses} to its own modeling
+statements (\cref{tab:status}). Each parameter records a tuple
+$\langle \text{value},\ \text{unit},\ \text{source},\ \text{confidence},\
+\text{validation status} \rangle$; a parameter whose value, unit, or source is
+not established is unknown and must not silently become a numerical
+assumption.
+
+\begin{table}[htbp]
+\centering\small
+\caption{Claim statuses and permitted use. Data-parameter provenance uses
+the data-layer enum \eqref{eq:srcset}, not this table.}
+\label{tab:status}
+\begin{tabular}{@{}p{3.1cm}p{6.9cm}p{4.2cm}@{}}
+\toprule
+Status & Meaning & Can support a DENSO claim? \\
+\midrule
+GENERIC & Structural property valid across factories (capacities are finite)
+& No --- structure only \\
+SYNTHETIC & Invented value for development/testing (e.g., 2 transporters)
+& No --- development only \\
+CANDIDATE & Proposed structure awaiting Factory-Tour validation & No ---
+design only \\
+OBSERVED & Measured during the tour with provenance & Provisionally, with
+sample basis \\
+MENTOR-CONFIRMED & Validated by a DENSO mentor & Yes \\
+UNKNOWN & Required information not yet available & No --- blocks dependent
+claims \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The central discipline of this report is the unknown-information rule: missing
+information about a required hard constraint yields status unknown, never
+implicit feasibility,
+\begin{equation}\label{eq:unknownrule}
+\text{data missing for constraint } i
+\;\Longrightarrow\;
+\phi_i(a,s_t)=\texttt{unknown},
+\qquad
+a \notin \Acal_F(s_t),
+\end{equation}
+i.e., the affected action is blocked and flagged for mentor validation rather
+than passed. This is the opposite of the common failure mode in which absent
+constraints silently make every action feasible.
+
+%======================================================================
+\section{Problem Definition}\label{sec:problem}
+%======================================================================
+
+\subsection{States, Actions, and the Catalog}\label{sec:actions}
+
+Let $s_t$ denote the decision-relevant state at epoch $t$, assembled from
+simulation outputs (queue lengths, WIP, utilization, bottleneck label) and
+the forecast trajectory. The decision layer proposes actions from a
+state-dependent set $\Acal(s_t)$, drawn from an \emph{action catalog} whose
+entries carry provenance (source type, confidence, validation status, mentor
+flag) and are, before the tour, synthetic development artifacts. The catalog
+contains the explicit no-action alternative $a_0$; ``no feasible
+improvement'' is a valid, reportable outcome of every decision epoch, not a
+failure.
+
+Six generic action families are CANDIDATE structures for the catalog ---
+resource reallocation, dispatch-priority change, route change,
+buffer/capacity adjustment, replenishment-interval change, and temporary
+capacity addition --- alongside the explicit no-op ($a_0$ itself). These
+\emph{action families} (the typed payload shapes realized in the C++ core)
+must not be confused with the \emph{decision families} of
+\cref{sec:families}, which group whole decision problems. Concrete action
+semantics (which resource, which route, which quantity) are unknown until
+the tour; the C++ core fixes only the typed payload shapes, not any DENSO
+instances.
+
+\subsection{Candidate Decision Families}\label{sec:families}
+
+The actual DENSO decision family is unknown before the tour. Six families
+are formulated as candidates (\cref{tab:families}); structural taxonomies of
+automotive intralogistics support the family menu
+\cite{boysen2015part,leanh2006agv,fragapane2021amr}, but none of them is
+evidence about DENSO's plant.
+
+\begin{table}[htbp]
+\centering\small
+\caption{Candidate decision families. All remain CANDIDATE until the
+Factory Tour; the priors on the first two rows are inferences from our own
+synthetic 2-action development catalog, not evidence about DENSO.}
+\label{tab:families}
+\begin{tabular}{@{}p{2.6cm}p{2.6cm}p{3.4cm}p{3.0cm}p{2.6cm}@{}}
+\toprule
+Family & Decision variables & Data needed & First method & Tour trigger \\
+\midrule
+Resource reallocation & $x_{rj} \in \{0,1\}$ & counts, ceilings
+$\bar{c}_r$, compatibility & assignment / MILP & resources re-assignable at
+operational cadence \\
+Dispatching & $\pi \in \Pi$ & current rule, allowed variants & catalog
+enumeration & dispatch rules adjustable \\
+Routing & $y_{r,e,t} \in \{0,1\}$ & route graph, travel times & exact + local
+search & routing freedom confirmed \\
+Replenishment & $\rho_j, \beta_j$ & policy bounds, demand link & policy
+enumeration / MILP & line feeding confirmed \\
+Buffer / capacity & $\Delta C_n$, $u_r$ & limits, authorization, cost & small
+integer set & buffer adjustment executable \\
+Integrated prod.--transport & coupled scheduling variables & schedule
+interface, coupling & exact small / matheuristic & strong coupling (S7) \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Resource reallocation and dispatching carry a modest catalog-informed prior:
+one of the two synthetic development actions is a resource-count change, and
+dispatch-rule selection is the other lever the current pipeline can express.
+For reallocation, the minimal structure is an assignment problem: with
+$x_{rj} = 1$ iff resource $r$ serves job $j$, resource exclusivity and job
+coverage read
+\begin{equation}\label{eq:exclusivity}
+\sum_{j \in J} x_{rj} \;\le\; 1 \quad \forall\, r \in R,
+\qquad\qquad
+\sum_{r \in R} x_{rj} \;=\; 1 \quad \forall\, j \in J,
+\end{equation}
+which becomes a generalized assignment problem once capacity or travel-time
+costs enter. For dispatching, the rule $\pi$ is chosen from a small catalog
+$\Pi$ (FIFO, earliest-deadline-first, bottleneck-first); at single-digit
+catalog sizes, exhaustive evaluation of all rules is both optimal within the
+catalog and fully explainable, so sophisticated heuristics add nothing.
+
+The routing family deserves one caution: the AGV/AMR literature
+\cite{leanh2006agv,fragapane2021amr} is an analogue, not proof that D2 is an
+AGV routing problem --- if the tour confirms fixed routes and tugger-train
+operations, the family collapses into replenishment. The integrated
+production--transport family is conditional on tour question S7; published
+approaches at scale are reported to use matheuristics or decomposition, but
+those pointers are unverified in our survey and no claim here is
+source-supported. It is substantially harder, because production and
+transport variables must be coupled over time, and should be selected only
+if the coupling is real.
+
+\subsection{Simulator Interface}\label{sec:interface}
+
+The simulator is modeled as a map
+\begin{equation}\label{eq:simulator}
+Y : (s_t,\ a,\ \xi_s,\ \omega) \;\longmapsto\; \mathbf{v} \in \mathbb{R}^{K},
+\end{equation}
+returning the KPI vector realized under action $a$, scenario $\xi_s$, and
+replication seed $\omega$. The decision layer consumes
+\texttt{SimulationResult} objects only through this contract --- with
+per-run metadata (scenario ID, seed, KPI units, action ID) --- and all
+physical semantics stay behind it.
+
+\begin{center}
+\small
+\begin{tabular}{@{}p{7.2cm}p{7.2cm}@{}}
+\toprule
+\textbf{Decision layer owns} & \textbf{Simulation layer owns} \\
+\midrule
+Candidate generation ($\Acal(s_t)$) & Physical evolution of the system \\
+Feasibility filtering ($\phi_i$, verdicts) & Event dynamics, queues,
+capacities \\
+Objective interpretation ($F$) & KPI value generation (definitions per Red
+decision) \\
+Ranking and recommendation & Bottleneck detection behavior \\
+Provenance labels on recommendations & Seeds, streams, replications \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+The decision layer must not re-create simulator semantics, and the
+simulation layer must not silently select the final recommended action. This
+split mirrors the constraint-split architecture verified in recent
+simulation-optimization practice \cite{ghaedyheidary2024simopt}: the
+optimizer enforces deterministic feasibility and proposes partial decisions;
+the simulator completes them and evaluates outcomes. Action masking under a
+formal system model is the same principle \cite{lassoued2025fms}.
+
+%======================================================================
+\section{Mathematical Model}\label{sec:model}
+%======================================================================
+
+\cref{tab:notation} fixes the notation. Sets $R, N, E, J$ are generic
+structures; their instances (which resources exist, which routes are
+admissible) are unknown until the tour, and no set is instantiated before its
+family is selected.
+
+\begin{table}[htbp]
+\centering\small
+\caption{Notation. Only symbols used in this report are listed.}
+\label{tab:notation}
+\begin{tabular}{@{}lp{12.5cm}@{}}
+\toprule
+Symbol & Meaning \\
+\midrule
+$N, R, J, E$ & Nodes (stations, buffers, supermarkets); resources
+(transporters, AGVs, operators); jobs; admissible routes \\
+$A$, $\Acal(s_t)$ & Action catalog; actions applicable in state $s_t$ \\
+$\Tset$, $t$, $\Delta$ & Decision epochs, epoch index, epoch length; horizon
+$H = |\Tset|$ \\
+$\Scal$, $\xi_s$ & Uncertainty scenarios; joint trajectory (forecast path +
+parameter set) \\
+$\omega$ & Simulation replication seed \\
+$K$ & KPI dimensions \\
+$\Hcal$, $g_i$, $\phi_i$ & Hard constraints; mathematical form $g_i \le 0$;
+three-valued status function \\
+$s_t$ & System state at epoch $t$ (queues, WIP, utilization, bottleneck
+label, forecast trajectory) \\
+$c_r$, $\delta_r$, $\bar{c}_r$ & Current count of resource $r$; count change
+proposed by an action; pool ceiling \\
+$C_n$, $q_n(t)$ & Capacity of node $n$; queue/WIP content at node $n$ \\
+$\tau_e$, $p_j$ & Travel time on route $e$; processing time of job $j$ \\
+$c_a$, $B$ & Implementation cost of action $a$; per-epoch budget \\
+$x_{rj}$, $\pi$, $y_{r,e,t}$, $\rho_j$, $\beta_j$, $u_r$, $\Delta C_n$ &
+Family decision variables (\cref{tab:families}) \\
+$Y$, $\mathbf{y}(a)$, $\Delta_s(a)$ & Simulator map \eqref{eq:simulator};
+KPI outcome vector; KPI delta vs.\ no-action under scenario $s$ \\
+$F$, $a^{*}$ & Preference functional; recommended action \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Feasibility Semantics}\label{sec:hardsoft}
+
+Each hard constraint $i \in \Hcal$ carries a status function
+\begin{equation}\label{eq:phistatus}
+\phi_i(a, s_t) \in \{\texttt{satisfied},\ \texttt{violated},\ \texttt{unknown}\},
+\end{equation}
+mapping the mathematical form $g_i(a,s_t) \le 0$ to \texttt{satisfied} when
+$g_i$ is verified evaluable with $g_i(a,s_t) \le 0$, to \texttt{violated} when
+verified evaluable with $g_i(a,s_t) > 0$, and to \texttt{unknown} when the
+data required to evaluate $g_i$ is missing. The action-level verdict composes
+these values with three-valued logic:
+\begin{equation}\label{eq:verdict}
+\text{verdict}(a)
+=
+\begin{cases}
+\texttt{INFEASIBLE} & \exists\, i \in \Hcal : \phi_i(a,s_t) = \texttt{violated},\\[2pt]
+\texttt{UNKNOWN} & \phi_i(a,s_t) \ne \texttt{violated}\ \forall i \in \Hcal
+\text{ and } \exists\, i \in \Hcal : \phi_i(a,s_t) = \texttt{unknown},\\[2pt]
+\texttt{FEASIBLE} & \phi_i(a,s_t) = \texttt{satisfied}\ \forall\, i \in \Hcal.
+\end{cases}
+\end{equation}
+Violation dominates; unverifiable constraints surface as unknown rather than
+being silently passed; only fully verified satisfaction yields feasibility.
+The feasible set is therefore
+\begin{equation}\label{eq:feasibleset}
+\Acal_F(s_t)
+=
+\left\{
+a \in \Acal(s_t)
+\;:\;
+\phi_i(a, s_t) = \texttt{satisfied} \quad \forall\, i \in \Hcal
+\right\}.
+\end{equation}
+
+The no-action alternative $a_0$ is feasible \emph{by construction} in the
+following evidence-aware sense. Change-dependent constraints take their
+$\delta = 0$ branch, so unknown data about proposed changes (pool ceilings,
+budgets, lead times) never blocks the status quo. State-dependent
+constraints, however, evaluate $a_0$ for real: if verified state evidence
+shows the status quo already violates such a constraint (an evidenced buffer
+overflow), the violation is reported for $a_0$ exactly as
+\cref{eq:phistatus} requires --- satisfaction is never fabricated from
+missing change data, and known violations are never suppressed.
+
+Soft constraints do not participate in the verdict of \eqref{eq:verdict}. A
+constraint may be declared soft by a named owner; its violation then appears
+as an explicit flag in the recommendation reason, never as a silent score
+shift, and hard-constraint violations are never expressed as objective
+penalties. One metamorphic property is used throughout the pre-tour test
+suite: adding hard constraints (in particular, tightening one) cannot enlarge
+the feasible set,
+\begin{equation}\label{eq:monotone}
+\Hcal' \supseteq \Hcal
+\;\Longrightarrow\;
+\Acal_F(s_t; \Hcal') \subseteq \Acal_F(s_t; \Hcal).
+\end{equation}
+
+With feasibility fixed, the recommendation problem is
+\begin{equation}\label{eq:generic-problem}
+a^{*}
+\in
+\arg\min_{a \in \Acal_F(s_t)}
+F\!\left(
+\{\Delta_s(a)\}_{s \in \Scal}
+\right),
+\qquad
+\Delta_s(a) := Y(s_t, a, \xi_s, \omega) - Y(s_t, a_0, \xi_s, \omega),
+\end{equation}
+where $F$ is a preference functional over scenario-indexed KPI deltas
+(\cref{sec:objectives}). Deliberately, \eqref{eq:generic-problem} does not
+commit to a scalar objective, and selecting $F$ (weights, orders,
+thresholds) is a human decision, not an agent inference.
+
+\subsection{Constraint Classes}\label{sec:constraints}
+
+Constraints fall into four classes: \emph{physical} (the modeled system
+itself; semantics owned by the simulation layer), \emph{operational} (how
+the plant is run), \emph{business} (budget, labor, service commitments), and
+\emph{decision-policy} (self-governance rules of the decision layer itself,
+e.g.\ ``no action is labeled feasible with unvalidated provenance''). The full
+pre-tour registry with identifiers, forms, and data needs is in
+\cref{sec:registry}; two structural aspects belong here.
+
+First, every constraint carries a \emph{check layer}: \emph{static}
+(evaluable from configuration before simulation), \emph{simulator-enforced}
+(an invariant the simulator must maintain --- resource exclusivity, buffer
+bounds, flow conservation, availability windows --- where the decision layer
+can only report violations observed in simulation results), or \emph{dynamic}
+(checked on simulation outputs). For a simulator-enforced constraint, the
+decision layer does not evaluate $\phi_i$ from configuration; it remains
+\texttt{unknown} unless simulation evidence is supplied.
+
+Second, static pre-checks are admissible in one direction only. When the
+\emph{proposed change} alone makes satisfaction impossible --- an
+\texttt{ADJUST\_BUFFER} action requesting a negative target level, or a
+proposed resource count exceeding a known pool ceiling,
+$0 \le c_r + \delta_r \le \bar{c}_r$ --- the decision layer may statically
+detect the violation at proposal time. Such checks turn \texttt{unknown} into
+\texttt{violated}, never into \texttt{satisfied}: verifying that a
+simulator-enforced constraint \emph{held} requires simulation evidence.
+C-OPS-007 (action lead time) similarly admits a static deadline check
+whenever the epoch carries a known response deadline.
+
+\subsection{Objective Structures}\label{sec:objectives}
+
+The KPI set is provisional; each KPI must eventually carry definition, unit,
+aggregation window, improvement direction, and DENSO priority, none of which
+is confirmed. The candidate KPI vector (deltas relative to no-action) is
+\begin{equation}\label{eq:kpivec}
+\mathbf{y}(a)
+=
+\bigl[
+\Delta\,\mathrm{throughput},\;
+\Delta\,\mathrm{lead\ time},\;
+\Delta\,\mathrm{lateness},\;
+\Delta\,\mathrm{WIP},\;
+\Delta\,\mathrm{cost},\;
+\mathrm{risk}
+\bigr],
+\end{equation}
+where risk is a placeholder for scenario-spread summaries. Queue length,
+service level, and stability may join the vector after tour confirmation;
+utilization is deliberately excluded, because high utilization at a
+constraint is efficient while at non-constraints it signals fragility --- its
+direction is context-dependent and its priority is a DENSO decision.
+
+Two preference structures are the primary candidates. The constrained single
+objective,
+\begin{equation}\label{eq:constrained}
+\min_{a \in \Acal_F(s_t)} c_a
+\quad\text{s.t.}\quad
+L(a) \le L_{\max},
+\end{equation}
+is appropriate when one operational limit dominates and the threshold
+$L_{\max}$ is defensible; the threshold itself is a human decision. The
+lexicographic objective orders KPIs by strict priority $k_1 \succ k_2 \succ
+\dots$: action $a$ dominates $b$ if
+\begin{equation}\label{eq:lex}
+f_{k_1}(a) < f_{k_1}(b)
+\quad\text{or}\quad
+\bigl(f_{k_1}(a) = f_{k_1}(b)\ \text{within tolerance }\varepsilon_1
+\text{ and } (f_{k_2}(a),\dots) \succ_{\mathrm{lex}} (f_{k_2}(b),\dots)\bigr).
+\end{equation}
+Tolerances $\varepsilon_k$ must be explicit; without them, negligible primary
+gains can justify large secondary losses. Lexicographic methods are standard
+preference-modeling tools \cite{miettinen1998nonlinear}; whether DENSO
+priorities are genuinely strict is a tour question.
+
+\begin{table}[htbp]
+\centering\small
+\caption{Alternative preference structures, kept as candidates. None is
+adopted before the tour.}
+\label{tab:objectives}
+\begin{tabular}{@{}p{2.9cm}p{4.6cm}p{3.6cm}p{3.6cm}@{}}
+\toprule
+Structure & Form & Appropriate when & Caution \\
+\midrule
+Epsilon-constraint & $\min f_1$ s.t.\ $f_k \le \epsilon_k$ & thresholds are
+operationally interpretable & thresholds are policy decisions; infeasible
+combinations must be reported \cite{miettinen1998nonlinear} \\
+Weighted normalized & $F = \sum_k w_k \hat{f}_k$ & preferences are genuinely
+compensatory and weights are elicited & incompatible units; scale sensitivity;
+unstable under $\pm 20\%$ weight perturbation \\
+Pareto screening & dominance over $\mathbf{y}(a)$ & first screen before
+weights exist & a frontier is a shortlist, not a recommendation; noise
+corrupts dominance at small sample sizes \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Evolutionary frontier search such as NSGA-II \cite{deb2002nsga2} is justified
+only when enumeration is impractical and noise is controlled; with tens of
+candidates and noisy simulation outputs, enumeration with replication
+discipline is usually superior. Risk-aware aggregation is presented but
+deferred: given scenario losses $C_s(a)$, the candidates are the expectation
+$\Eop[C(a)] = \sum_s p_s C_s(a)$, the worst case $\max_s C_s(a)$, and the
+CVaR representation \cite{rockafellar2000cvar}
+\begin{equation}\label{eq:cvar}
+\operatorname{CVaR}_{\alpha}(C(a)) =
+\min_{t}\Bigl[\, t + \tfrac{1}{1-\alpha}\, \Eop\bigl[(C(a) - t)_+\bigr] \Bigr].
+\end{equation}
+Escalating a risk measure from a reported column to a decisive rule requires
+(i) asymmetric downside consequences, (ii) service-level violations that
+matter, and (iii) sufficient tail data --- empirical CVaR at level $\alpha$
+from $N$ samples is driven by only $\approx N(1-\alpha)$ tail observations.
+None of the three holds today: the pipeline is deterministic. The pre-tour
+policy is report-first --- rank on expected KPI, report observed worst case
+and (when tail support suffices) CVaR as secondary columns.
+
+Cost semantics deserve one explicit rule: \emph{known-zero cost and unknown
+cost are distinct states}. An action whose cost has not been recorded is not
+a free action; ranking rules may consume cost only when its value and unit
+are known (mentor-confirmed or synthetic by design). If absolute costs stay
+undisclosed, an explicitly labeled ordinal ranking (cheap/medium/expensive)
+is acceptable, and the objective must then use forms that do not need a
+common unit --- lexicographic or epsilon-constraint, never a fabricated
+currency sum.
+
+\subsection{Uncertainty and Scenario Evaluation}\label{sec:uncertainty}
+
+Three uncertainty sources are kept distinct: (i) \emph{forecast uncertainty}
+--- the forecast contract provides quantile paths (p10/p50/p90; current code
+consumes only p50), and quantiles are not scenarios with probabilities;
+(ii) \emph{process randomness} --- service, travel, and breakdown variability
+inside the simulator, which exists only once the DES is stochastic; and
+(iii) \emph{parameter uncertainty} --- tour-measured values may be wrong or
+drift, handled by labeled ranges and sensitivity analysis. Forecast residual
+uncertainty and simulator variability can model the same mechanism twice;
+scenario construction must state which variability lives where. Constructing
+valid joint scenario trajectories is a forecast-layer task: trajectories must
+preserve serial correlation across the horizon and cross-variable dependence
+(independent per-period sampling from marginals creates impossible
+trajectories), and any scenario weights require a sourced justification.
+
+Actions are compared on a \emph{shared scenario--seed bank}: the identical
+scenario set and seed set across actions wherever possible. The same integer
+seed does not by itself guarantee valid pairing once actions alter event
+paths, so pairing requires either a common-random-numbers mechanism (a
+simulator-design question owned by the simulation layer) or adequate
+independent replications with explicit unpaired analysis. Reporting uses
+mean, variance, quantiles, and confidence intervals \cite{alexopoulos2006output}.
+Quantile paths are used as labeled stress tests --- a candidate is evaluated
+under each path and rank stability across paths is reported --- never
+averaged into a single number, which would manufacture a probability
+interpretation the forecast never provided. Sample-average approximation
+formalizes Monte Carlo evaluation of expectations when scenario sets are
+sampled \cite{amaran2016simulation,kleywegt2002saa}; robust-optimization and
+scenario-approach guarantees are explicitly not transferred to our black-box
+DES setting without their own assumptions
+\cite{bertsimas2004price,campi2008scenario}.
+
+%======================================================================
+\section{Solution and Evaluation Strategy}\label{sec:strategy}
+%======================================================================
+
+\subsection{Baselines}\label{sec:baselines}
+
+\begin{table}[htbp]
+\centering\small
+\caption{Decision-method ladder. Every stronger method must beat the
+mandatory baselines under the same scenario--seed bank before it is
+considered.}
+\label{tab:baselines}
+\begin{tabular}{@{}p{4.2cm}p{6.4cm}p{3.8cm}@{}}
+\toprule
+Method & Role & Placement rationale \\
+\midrule
+Baseline 0: no action & Null recommendation; every claim is a delta vs.\ this
+& Mandatory reference \\
+Baseline 1: rule-based heuristic & ``if bottleneck $=$ transport, add
+transport capacity''-style rules & Mandatory; simple, explainable \\
+Baseline 2: greedy enumeration & Evaluate all feasible single actions; rank
+by approved rule & Likely first real optimizer; optimal within the catalog \\
+\addlinespace
+Exact reference & Exhaustive enumeration on tiny instances & Correctness
+oracle (golden cases) \\
+Structured exact & MILP / CP-SAT / min-cost flow / assignment & Only if the
+family has algebraic structure \\
+Conditional larger search & Local search, tabu, ILS, ALNS & Only when
+$|\Acal| \gg$ budget and the family survives selection \\
+Deferred & NSGA-II, RL, matheuristics, DRO & Not justified pre-tour (catalog
+small; assumptions unverified) \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\paragraph{Selection rule (pre-tour default).} The Baseline 2 pipeline
+recommends a candidate only when it is \emph{strictly} preferred over the
+no-action alternative $a_0$ under the declared policy: a tie with $a_0$
+keeps the status quo, because a zero-improvement change with unknown cost
+and lead time is not a recommendation. $a_0$ itself is evaluated through
+the same gate; when evidence shows the status quo violates a hard
+constraint, $a_0$ is infeasible --- it is then neither simulated nor
+compared against, and the best feasible candidate is recommended while the
+$a_0$ entry exposes the violation. When nothing is feasible, the outcome
+is an explicit no-feasible-option report, never a fabricated
+recommendation. This rule is a conservative pre-tour default and is a
+Factory-Tour confirmation item, not a settled preference.
+
+For small discrete candidate sets, enumeration with statistically careful
+comparison is the methodologically indicated choice
+\cite{amaran2016simulation,kleywegt2002saa}; recent results show that for
+small recurring re-decisions even exact solutions can be milliseconds away
+\cite{adamo2024realtime}, so search sophistication is not the bottleneck at
+our scale. Ranking-and-selection machinery for many noisy alternatives is
+deferred until needed \cite{wang2024sequential}.
+
+One capability gap is acknowledged plainly: the current repository simulator
+accepts only a configuration and a forecast --- it cannot accept an action
+--- so simulation-based ranking is blocked until the simulation owner
+delivers an action-capable simulator. Until then, the implementable
+decision-layer work is the feasibility gate, the provenance-labeled action
+catalog, and ranking over synthetic analytic outcomes, never fabricated
+simulation results.
+
+\subsection{Exact Small-Instance Oracle}\label{sec:oracle}
+
+For small synthetic instances (2--3 resources, 3--5 actions), all feasible
+single actions are enumerated and the exact optimum $f^{*}$ of the model
+under evaluation is computed. A ranking method produces $f_h$; the
+optimality gap is
+\begin{equation}\label{eq:gap}
+\mathrm{gap}(f_h, f^{*})
+=
+\begin{cases}
+\dfrac{f_h - f^{*}}{|f^{*}|}, & f^{*} \ne 0,\\[8pt]
+f_h - f^{*}, & f^{*} = 0 \quad \text{(zero-denominator guard)}.
+\end{cases}
+\end{equation}
+This is a correctness benchmark on synthetic instances only --- never a
+DENSO performance result. Its purposes are to verify that feasibility,
+ranking, and preference-rule modules reproduce hand-computable optima, to
+characterize runtime scaling honestly, and to serve as a differential-testing
+oracle for any future optimized search kernel.
+
+\subsection{Simulation Evaluation Budget}\label{sec:budget}
+
+The evaluation cost per decision epoch is approximately
+\begin{equation}\label{eq:evalcost}
+\text{Cost} \;\propto\; |\Acal| \times |\Scal| \times R \times t_{\mathrm{sim}},
+\end{equation}
+with $R$ replications per (action, scenario) and $t_{\mathrm{sim}}$ runtime
+per run. With a toy simulator and a small catalog the cost is negligible; it
+becomes binding once the product reaches the order of hundreds to thousands
+of full runs per epoch (e.g., $20 \times 10 \times 5 = 1000$), or when
+$t_{\mathrm{sim}}$ grows with a real DES. The first response is not
+optimization but the two-tier budget pattern verified in recent simulation
+optimization \cite{ghaedyheidary2024simopt}: a small replication budget per
+candidate during ranking ($R = 5$--$10$; design proposal, not a universal
+constant), followed by a larger \emph{fresh-sample} validation of the
+selected finalist ($\ge 10R$) that is never tuned on and used only for
+confirmation. Sequential elimination \cite{wang2024sequential}, budget
+allocation inside metaheuristics, common-random-numbers variance reduction,
+memoization, and surrogates are deferred until a seeded DES and a measured
+need exist.
+
+\subsection{Algorithm Selection and Implementation Status}\label{sec:algo}
+
+Algorithm selection follows problem identification, never precedes it.
+Confirmed problem shape maps to a first method family: a small action
+catalog maps to enumeration/greedy with paired evaluation; structured
+assignment to MILP/CP-SAT/min-cost flow; routing and scheduling to an exact
+baseline plus neighborhood search; a large black-box DES problem to
+simulation optimization with a fixed budget and final validation; a dynamic
+decision cadence to rolling-horizon or event-triggered re-solving. MILP,
+CP-SAT, tabu, ILS, ALNS, genetic algorithms, and reinforcement learning are
+not selected prematurely, and nothing native is justified at current problem
+sizes.
+
+Python remains the reference language for the pipeline (model, baselines,
+orchestration, small exact instances); native kernels are a post-profiling
+decision --- C++ when the solver ecosystem, combinatorial structure, or team
+familiarity dominates, Rust when a larger custom parallel search engine with
+concurrency-safety requirements is warranted. No native \emph{search kernel}
+is planned in the competition window. A C++20 core at \texttt{cpp/}
+implements the feasibility semantics of \cref{sec:hardsoft} and the catalog
+as the approved executable specification of this report's pre-tour
+semantics; that approval covers the executable-specification role, not a
+choice of C++ for future search kernels. Its action-cost handling
+deliberately differs from the Python shared contract --- the C++ core omits
+cost entirely because its unit is unknown pre-tour, whereas the Python
+dataclass defaults \texttt{estimated\_cost} to 0.0 --- and reconciling the
+two is a shared-contract decision that must not be made silently by either
+layer.
+
+%======================================================================
+\section{Data and Validation Requirements}\label{sec:data}
+%======================================================================
+
+\begin{center}
+\small
+\begin{longtable}{@{}p{3.4cm}p{3.4cm}p{1.4cm}p{2.4cm}p{3.2cm}@{}}
+\caption{Compact data-requirement map.}\\
+\toprule
+Field & Used by & Required & Unit & Status / tour need \\
+\midrule
+\endfirsthead
+\toprule
+Field & Used by & Required & Unit & Status / tour need \\
+\midrule
+\endhead
+Resource IDs & assignment family & yes & --- & UNKNOWN (structure only) \\
+Route topology & routing, connectivity & yes & graph & UNKNOWN \\
+Travel time $\tau_e$ & simulation, actions & yes & min & SYNTHETIC \\
+Loading/unloading time & simulation & yes & min & UNKNOWN \\
+Resource count $c_r$ & feasibility C-PHY-002 & yes & count & SYNTHETIC (2) \\
+Pool ceiling $\bar{c}_r$ & ADD\_RESOURCE bound & yes & count & UNKNOWN \\
+Buffer capacity $C_n$ & C-PHY-003 & yes & units & SYNTHETIC (20) \\
+Queue/WIP $q_n$ & state $s_t$ & runtime & jobs & SYNTHETIC (toy simulator) \\
+Demand forecast & scenario construction & yes & jobs/h & SYNTHETIC
+(quantiles) \\
+Replenishment policy & replenishment family & family & min/units & UNKNOWN \\
+Deadline / service target & lateness KPI & objective & time & UNKNOWN \\
+Shift schedule & C-OPS-002, epochs & yes & schedule & UNKNOWN \\
+Action catalog & decision layer & yes & --- & SYNTHETIC (2 actions) \\
+Action cost $c_a$ & C-BUS-001/003 & ranking & currency/ordinal & UNKNOWN \\
+Action lead time & C-OPS-007 & honest ranking & min & UNKNOWN \\
+Decision cadence & epoch design $\Tset$ & yes & per shift/day & UNKNOWN \\
+KPI priorities & objective $F$ & yes & --- & UNKNOWN (Red decision) \\
+\bottomrule
+\end{longtable}
+\end{center}
+
+Validation proceeds in three layers before any optimization run: (A) schema
+validation (fields, types, units, referential integrity); (B)
+domain/physical checks --- non-negativity, capacity bounds, utilization in
+$[0,1]$, interval ordering --- which are machine-checkable now; and (C)
+statistical/temporal checks (distributions, gaps, drift, leakage) once
+enough data exists. Impossible records are flagged, never silently repaired.
+One reporting rule accompanies the KPI units once confirmed: a delta
+smaller than the evaluation noise floor is not an improvement --- before an
+action is called better than no-action, its paired delta must exceed the
+dispersion of the paired differences (e.g., the confidence interval must
+exclude zero) and matter operationally.
+
+Synthetic development scenarios prove \emph{algorithmic} properties ---
+correctness of feasibility logic, contract shapes, invariants, deterministic
+behavior (same config + seed $\Rightarrow$ same result), and expected
+directional responses --- and cannot prove real DENSO accuracy, ROI,
+bottleneck identity, or optimality of any action. The six named scenarios
+are \texttt{balanced\_flow} (no bottleneck; no action claims large
+improvement), \texttt{known\_transport\_bottleneck} (transporter-constrained
+state; a feasible \texttt{ADD\_RESOURCE} exists), \texttt{buffer\_overflow}
+(queue at/over capacity; buffer-family and hard-constraint tests),
+\texttt{demand\_spike} (p90 trajectory stress; capacity interaction),
+\texttt{resource\_shortage} (pool ceiling makes \texttt{ADD\_RESOURCE}
+infeasible via C-PHY-002), and \texttt{all\_actions\_infeasible} (the valid
+output is an empty list with named violations, not a fake recommendation).
+Metamorphic properties tested on them include \cref{eq:monotone}; increasing
+bottleneck capacity must not decrease throughput in a deterministic
+scenario; adding a dominated action must not change the winner; and missing
+constraint data must block, not pass, the affected action.
+
+%======================================================================
+\section{Factory-Tour Decision Gates}\label{sec:tour}
+%======================================================================
+
+The Factory Tour (2026-09-11) resolves the core unknowns. Each question maps
+to a specific part of the model:
+
+\begin{center}
+\small
+\begin{tabular}{@{}p{6.6cm}p{7.6cm}@{}}
+\toprule
+Question & Affects \\
+\midrule
+M1. Actual logistics pain point? & Family selection
+(\cref{sec:families}); everything downstream \\
+M2. Which 2--3 actions are executable? & Action space $\Acal(s_t)$, action
+catalog; feasibility data \\
+M3. Which KPIs matter; current values? & Objective $F$
+(\cref{sec:objectives}); improvement sizing \\
+M4. What is forbidden? & Hard-constraint set $\Hcal$
+(\cref{sec:hardsoft}, \cref{sec:registry}) \\
+M5. Decision cadence / response deadline? & Static vs.\ rolling-horizon
+formulation; epoch design $\Tset$; runtime budget \\
+M6. One historical incident walkthrough & Ground-truth anchor for action
+effects; validation \\
+S1. Current manual decision rule? & Baseline 0/1 definition
+(\cref{sec:baselines}) \\
+S2. Cost structure (even ordinal)? & C-BUS constraints; objective cost term
+(\cref{sec:objectives}) \\
+S3. Resource flexibility / pool ceiling $\bar{c}_r$? & C-PHY-002 bound;
+resource-family viability \\
+S5. Action lead times / stability? & C-OPS-007/008 data; ranking honesty \\
+S7. Production--transport coupling? & Whether the integrated family
+(\cref{sec:families}) is live; simulator interface granularity \\
+S8. Re-decision trigger in practice? & Rolling-horizon vs.\ event-triggered
+vs.\ one-shot; epoch design (refines M5) \\
+\multicolumn{2}{@{}p{14.2cm}@{}}{\small S4 (data availability/latency) and
+S6 (demand pattern/forecast practice) feed the data and forecast layers,
+not the decision model directly; they are captured in the tour checklist
+but omitted here.} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+After the tour, each family is scored on relevance, data availability,
+actionability, optimization structure, and simulator compatibility, with a
+Go/No-Go gate per family. Bottleneck detection research
+\cite{li2009bottleneck,lawrence1994shifting} motivates the cadence questions:
+bottlenecks shift over time, so a one-shot formulation is unlikely to
+survive contact with operations. All post-tour selection statuses are
+provisional by construction until the tour answers arrive.
+
+%======================================================================
+\section{Limitations and Next Steps}\label{sec:limits}
+%======================================================================
+
+What this report fixes: the decision-layer architecture (generate
+$\rightarrow$ gate $\rightarrow$ simulate $\rightarrow$ rank $\rightarrow$
+recommend), the three-valued feasibility semantics
+\eqref{eq:verdict}, the four-class constraint taxonomy with check layers,
+the candidate objective structures with the preference rule left as a human
+decision, the simulator--optimizer ownership boundary, and the evaluation
+methodology (shared scenario--seed banks, paired deltas, two-tier
+replication budget, fresh-sample confirmation).
+
+What remains unknown: the actual decision family, the executable action
+space, factory-specific hard constraints, the KPI hierarchy, decision
+cadence, and real cost parameters --- all gated on the Factory Tour. The
+report's honest limit is that it is a pre-tour artifact: it defines how a
+recommendation must be produced and evaluated, not what DENSO's plant will
+actually require.
+
+The Baseline 0--2 pipeline is implemented and tested in the C++ core
+(`\texttt{cpp/}`): an explicit no-action baseline evaluated through the
+same simulation boundary as every candidate, a generic rule-based
+candidate generator, and greedy enumeration under an explicitly synthetic
+test preference policy --- differential-tested against a tiny exhaustive
+oracle on the named synthetic scenarios. No final optimizer, heuristic, or
+native search kernel is attempted before the tour; the next integration
+step is an action-capable simulator from the simulation owner, so that
+candidates can be evaluated against a real Digital-Twin boundary instead
+of the current test double.
+
+%======================================================================
+\appendix
+\section{Constraint Registry}\label{sec:registry}
+%======================================================================
+
+This appendix lists the pre-tour constraint registry. Identifiers are stable
+and used by the C++ core; forms are generic. Statuses are claim statuses
+(\cref{tab:status}).
+
+\subsection*{Physical constraints}
+
+\begin{center}
+\small
+\begin{longtable}{@{}lp{4.0cm}p{3.4cm}p{1.8cm}p{2.3cm}@{}}
+\caption{Physical constraints. Simulation semantics owned by the simulation
+layer.} \label{tab:physical}\\
+\toprule
+ID & Constraint & Mathematical form & Layer & Status \\
+\midrule
+\endfirsthead
+\toprule
+ID & Constraint & Mathematical form & Layer & Status \\
+\midrule
+\endhead
+C-PHY-001 & Resource exclusivity & $\sum_j x_{rj} \le 1\ \forall r$
+\eqref{eq:exclusivity} & sim-enf. & GENERIC \\
+C-PHY-002 & Resource-count bounds & $0 \le c_r + \delta_r \le \bar{c}_r$,
+pool ceiling UNKNOWN & static & GENERIC / HARD \\
+C-PHY-003 & Buffer bounds & $0 \le q_n(t) \le C_n\ \forall n,t$ &
+sim-enf. & GENERIC / HARD \\
+C-PHY-004 & Flow conservation & inflow $=$ outflow $+$ $\Delta$ storage on
+every node & sim-enf. & GENERIC / HARD \\
+C-PHY-005 & Route connectivity & transport only along $e \in E$ & static &
+GENERIC \\
+C-PHY-006 & Non-negativity & $\tau_e \ge 0$, $p_j \ge 0$, $q_n \ge 0$,
+WIP $\ge 0$ & static & UNIVERSAL \\
+C-PHY-007 & Availability windows & resource busy only within availability
+calendar & sim-enf. & UNKNOWN \\
+\bottomrule
+\end{longtable}
+\end{center}
+
+\subsection*{Operational constraints}
+
+\begin{center}
+\small
+\begin{longtable}{@{}lp{5.6cm}p{4.0cm}p{2.0cm}@{}}
+\caption{Operational constraints (pre-tour candidates; most UNKNOWN).}\\
+\toprule
+ID & Constraint & Data needed & Status \\
+\midrule
+\endfirsthead
+\toprule
+ID & Constraint & Data needed & Status \\
+\midrule
+\endhead
+C-OPS-001 & Only catalog actions recommendable & action catalog w/\
+provenance & enforced now \\
+C-OPS-002 & Shift windows (changes at boundaries only) & shift schedule &
+UNKNOWN \\
+C-OPS-003 & Dispatch restrictions (fixed priorities) & dispatch rules &
+UNKNOWN \\
+C-OPS-004 & Replenishment policy bounds & policy parameters & UNKNOWN \\
+C-OPS-005 & Route/material restrictions & material--route compatibility &
+UNKNOWN \\
+C-OPS-006 & Safety: no unsafe congestion/interaction & layout, traffic
+rules & UNKNOWN \\
+C-OPS-007 & Action lead time (takes effect after implementation delay) &
+per-action lead time & UNKNOWN \\
+C-OPS-008 & Action cooldown / minimum stability period & cooldown policy &
+UNKNOWN \\
+\bottomrule
+\end{longtable}
+\end{center}
+
+\noindent C-OPS-006 is hard by default: no action may create unsafe
+congestion (e.g., AMR--pedestrian interaction --- synthetic illustration);
+its data is unknown.
+
+\subsection*{Business constraints}
+
+\begin{center}
+\small
+\begin{tabular}{@{}lp{7.4cm}p{2.2cm}p{2.0cm}@{}}
+\toprule
+ID & Constraint & Hard/soft & Status \\
+\midrule
+C-BUS-001 & Budget: $\sum_{a \in \text{selected}} c_a \le B$ & hard if
+budget real; else excluded & UNKNOWN \\
+C-BUS-002 & Labor limits (overtime, headcount) & hard & UNKNOWN \\
+C-BUS-003 & Implementation/switching cost counts & soft (flag) or objective
+term & design proposal \\
+C-BUS-004 & Maximum acceptable lateness/service level & hard if contractual
+& UNKNOWN \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection*{Decision-policy constraints (self-governance)}
+
+\begin{center}
+\small
+\begin{tabular}{@{}lp{9.0cm}p{3.0cm}@{}}
+\toprule
+ID & Constraint & Status \\
+\midrule
+C-POL-001 & At most $N_{\mathrm{chg}}$ actions change per epoch
+($\sum_a z_a \le N_{\mathrm{chg}}$) & $N_{\mathrm{chg}}$ UNKNOWN \\
+C-POL-002 & Recommendation must include no-action comparison & enforced
+(hard policy) \\
+C-POL-003 & No action labeled feasible with unknown/unvalidated provenance &
+enforced (hard policy) \\
+C-POL-004 & Combined/bundled actions disabled until single-action effects
+measured & enforced (hard policy, current) \\
+C-POL-005 & Preference rule fixed only by named human decision & enforced
+(hard policy) \\
+C-POL-006 & No DENSO-confidential data in Git/outputs/demos & enforced (hard
+policy) \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\bibliographystyle{plain}
+\bibliography{references}
+
+\end{document}
