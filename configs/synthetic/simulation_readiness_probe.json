@@ -1,0 +1,31 @@
+{
+  "source": "synthetic",
+  "note": "Diagnostic inputs only. Added time fields are probes for ignored inputs, not an approved DES schema or DENSO facts.",
+  "config": {
+    "name": "simulation-readiness-probe",
+    "parameters": {
+      "transporter_count": 2,
+      "buffer_capacity": 20,
+      "transport_time_min": 5,
+      "station_a_processing_time_min": 1,
+      "station_b_processing_time_min": 1
+    }
+  },
+  "forecast": {
+    "target": "jobs_per_hour",
+    "horizon_min": 30,
+    "p10": [90],
+    "p50": [100],
+    "p90": [115]
+  },
+  "scenarios": [
+    {"scenario_id": "demand_plus_10", "demand_multiplier": 1.1},
+    {"scenario_id": "demand_plus_20", "demand_multiplier": 1.2},
+    {"scenario_id": "one_transporter", "parameter_overrides": {"transporter_count": 1}},
+    {"scenario_id": "three_transporters", "parameter_overrides": {"transporter_count": 3}},
+    {"scenario_id": "buffer_capacity_one", "parameter_overrides": {"buffer_capacity": 1}},
+    {"scenario_id": "transport_time_double", "parameter_overrides": {"transport_time_min": 10}},
+    {"scenario_id": "station_a_time_double", "parameter_overrides": {"station_a_processing_time_min": 2}},
+    {"scenario_id": "station_b_time_double", "parameter_overrides": {"station_b_processing_time_min": 2}}
+  ]
+}
