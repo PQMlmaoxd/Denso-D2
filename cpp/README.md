@@ -1,10 +1,11 @@
 # denso_d2::decision — C++ Decision Core
 
-Executable specification of the pre-tour decision semantics defined
+Executable specification of the decision semantics defined
 canonically in `docs/decision/modeling/d2_decision_model.tex` (the LaTeX
 report is the source of truth; this code must not silently diverge from it).
 This core is the approved executable specification of feasibility semantics
-and of the Baseline 0–2 decision pipeline for the pre-tour decision layer.
+and of the Baseline 0–2 decision pipelines. The post-tour logistics slice is
+implemented beside, not inside, the stable generic gate.
 It does not decide that every future kernel is C++; later components are
 chosen per component.
 
@@ -29,14 +30,22 @@ chosen per component.
   candidates, and selects under an explicitly supplied preference policy.
   Selection is differential-tested against a brute-force oracle in the
   tests.
+- A post-tour logistics boundary (`LogisticsSnapshot`) with typed task
+  priority, assignment/reassignment, and route-selection actions. Its
+  pipeline performs static admission, action-scoped simulation, evidence
+  identity validation, final feasibility, then policy comparison. Missing
+  required evidence remains `Unknown`; `Unknown` and `Infeasible` outcomes
+  never enter ranking. An unknown no-action counterfactual returns the
+  distinct `BaselineEvidenceUnknown` status and cannot produce a
+  recommendation.
 
 ## Non-responsibility
 
 No final optimizer, ranking, objective/weights beyond the explicitly
 synthetic test policy, KPI evaluation, simulation, Digital-Twin behavior,
 serialization, CLI, or I/O. Simulator semantics stay behind the
-`SimulationEvaluator` interface and the `FactoryState` evidence fields
-(`simulated_buffer_content`); the decision layer never re-implements them.
+`SimulationEvaluator` or `PostTourSimulationEvaluator` interfaces; the
+decision layer never re-implements them.
 The built-in `SyntheticLexicographicPreference` is a test policy only; it
 is not a DENSO objective and must not be presented as one.
 
@@ -62,7 +71,7 @@ cmake --build cpp-build-sanitize --parallel
 
 ## Tests
 
-Two suites run via `ctest`.
+Three suites run via `ctest`.
 
 `cpp/tests/decision_tests.cpp` covers the required behaviors T1–T14
 (no-action semantics, hard violation, missing evidence, determinism, no
@@ -88,6 +97,15 @@ determinism, deterministic tie-breaking by action ID, and a brute-force
 oracle cross-check (the greedy selection equals the exhaustive-best
 selection on the same instance).
 
+`cpp/tests/post_tour_tests.cpp` covers deterministic typed candidate
+generation, the explicit-risk-task Baseline 1 rule, duplicate snapshot IDs,
+duplicate operation payloads, malformed identifiers and out-of-range enums,
+hard-violation precedence, missing static and dynamic evidence, action-bound
+evidence identity, negative dynamic durations, simulation admission,
+status-quo ties, unknown-baseline blocking, final-feasibility selection,
+alternate-route invariants, the cost-independent synthetic preference
+policy, and agreement with an exhaustive synthetic selection oracle.
+
 All fixture values are SYNTHETIC and labeled as such; none is a DENSO fact.
 
 ## Performance characteristics
@@ -97,7 +115,12 @@ registry insert is O(1) amortized, lookup O(1); evaluating one action is
 O(|registry|) with O(1) applicability checks per constraint; evaluating N
 actions is O(N × |registry|); the Baseline 2 selection loop is a linear
 max-scan over feasible candidates (≤ 4 policy calls per candidate, O(N)
-total). Practical bottlenecks must be established by profiling; once a
+total). The post-tour pipeline additionally verifies that the supplied
+preference policy is a total preorder: the relation is sampled once per
+ordered pair (O(N^2) policy calls) and the reflexivity/completeness/
+transitivity checks then run on the cached boolean matrix. This validation
+is intended for the small candidate sets of a single decision epoch.
+Practical bottlenecks must be established by profiling; once a
 real simulation evaluator is integrated, simulation cost is expected to
 dominate the evaluation loop.
 
@@ -113,12 +136,19 @@ dominate the evaluation loop.
   its unit is UNKNOWN pre-tour. That cross-language contract difference is
   an open item for the shared-contract owners; the two layers must not be
   silently reconciled by either side.
-- There is no post-simulation evidence path yet: simulator-enforced
-  constraints (e.g. buffer bounds) can never verify for change-carrying
-  actions inside `run_greedy_evaluation`, because the gate runs before the
-  simulation and `SimulationResult` carries no evidence back. A two-phase
-  gate (evaluate → simulate → re-gate with per-action evidence) is the
-  planned resolution and is an owner decision, not an accident.
+- The stable generic `run_greedy_evaluation` still has no post-simulation
+  evidence path. The separate post-tour logistics pipeline closes that gap
+  for its typed action families without changing generic gate semantics.
+- Post-tour battery thresholds, action lead times, dynamic limits, and model
+  version are caller-owned rules. No DENSO value or KPI hierarchy is built
+  into the core. Resource compatibility remains explicit typed evidence and
+  missing values produce `Unknown`. When a task has no known current route,
+  assignment and reassignment defer route resolution to the simulator: the
+  presence of an available matching pickup->destination route is sufficient
+  static evidence (owner-confirmed).
+- `SyntheticPostTourPreference` is a total-preorder test policy over
+  throughput, lead time, lateness, and WIP. It deliberately ignores optional
+  cost because cost units and known-vs-unknown treatment remain unconfirmed.
 - `run_greedy_evaluation` takes exactly one (scenario, seed) pair per run:
   the decision model report's scenario–seed bank with replication
   aggregation has no seam yet. Pre-tour scope; the bank API is a planned

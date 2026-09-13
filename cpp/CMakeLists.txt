@@ -15,6 +15,7 @@ add_library(denso_d2_decision STATIC
     src/catalog.cpp
     src/evaluation.cpp
     src/gate.cpp
+    src/post_tour.cpp
 )
 target_include_directories(denso_d2_decision PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 
@@ -34,6 +35,13 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     target_compile_options(denso_d2_baseline_tests PRIVATE -Wall -Wextra -Wpedantic)
 endif()
 
+add_executable(denso_d2_post_tour_tests tests/post_tour_tests.cpp)
+target_link_libraries(denso_d2_post_tour_tests PRIVATE denso_d2_decision)
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(denso_d2_post_tour_tests PRIVATE -Wall -Wextra -Wpedantic)
+endif()
+
 enable_testing()
 add_test(NAME decision_tests COMMAND denso_d2_decision_tests)
 add_test(NAME baseline_tests COMMAND denso_d2_baseline_tests)
+add_test(NAME post_tour_tests COMMAND denso_d2_post_tour_tests)
