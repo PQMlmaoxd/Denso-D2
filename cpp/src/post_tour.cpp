@@ -17,7 +17,7 @@ namespace denso_d2::decision {
 namespace {
 
 constexpr const char* kSyntheticNote =
-    "post-tour synthetic candidate; operational validity requires mentor validation";
+    "post-tour synthetic candidate; operational validity requires confirmation against actual factory rules/data";
 
 ConstraintEvaluation finding(
     std::string id,
