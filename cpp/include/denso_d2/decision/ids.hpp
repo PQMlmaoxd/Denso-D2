@@ -32,6 +32,26 @@ struct MaterialId {
     std::string value;
 };
 
+struct TransportTaskId {
+    std::string value;
+
+    friend bool operator==(const TransportTaskId&, const TransportTaskId&) = default;
+    friend bool operator!=(const TransportTaskId&, const TransportTaskId&) = default;
+    friend bool operator<(const TransportTaskId& lhs, const TransportTaskId& rhs) {
+        return lhs.value < rhs.value;
+    }
+};
+
+struct AmrId {
+    std::string value;
+
+    friend bool operator==(const AmrId&, const AmrId&) = default;
+    friend bool operator!=(const AmrId&, const AmrId&) = default;
+    friend bool operator<(const AmrId& lhs, const AmrId& rhs) {
+        return lhs.value < rhs.value;
+    }
+};
+
 inline bool operator==(const ActionId& a, const ActionId& b) { return a.value == b.value; }
 inline bool operator!=(const ActionId& a, const ActionId& b) { return !(a == b); }
 inline bool operator<(const ActionId& a, const ActionId& b) { return a.value < b.value; }
@@ -93,6 +113,20 @@ struct hash<denso_d2::decision::RouteId> {
 template <>
 struct hash<denso_d2::decision::MaterialId> {
     size_t operator()(const denso_d2::decision::MaterialId& id) const noexcept {
+        return std::hash<std::string>{}(id.value);
+    }
+};
+
+template <>
+struct hash<denso_d2::decision::TransportTaskId> {
+    std::size_t operator()(const denso_d2::decision::TransportTaskId& id) const noexcept {
+        return std::hash<std::string>{}(id.value);
+    }
+};
+
+template <>
+struct hash<denso_d2::decision::AmrId> {
+    std::size_t operator()(const denso_d2::decision::AmrId& id) const noexcept {
         return std::hash<std::string>{}(id.value);
     }
 };

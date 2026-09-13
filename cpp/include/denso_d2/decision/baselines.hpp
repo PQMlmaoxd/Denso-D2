@@ -80,6 +80,7 @@ enum class SelectionStatus {
     ActionSelected,   // a feasible candidate strictly beats a_0
     NoAction,         // no feasible candidate strictly beats a_0 (status quo)
     NoFeasibleOption,  // neither a_0 nor any candidate is FEASIBLE
+    BaselineEvidenceUnknown,  // a_0 cannot support a valid comparison
 };
 
 // Baseline 2: greedy exhaustive evaluation over a candidate set.

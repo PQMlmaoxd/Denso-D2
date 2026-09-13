@@ -1,5 +1,6 @@
 #include <algorithm>
 #include <optional>
+#include <stdexcept>
 #include <type_traits>
 #include <utility>
 #include <variant>
@@ -58,6 +59,8 @@ bool applies_to_action(const Constraint& constraint, const Action& action) {
             } else if constexpr (std::is_same_v<Family, ChangeReplenishmentInterval>) {
                 const auto* bound = std::get_if<ReplenishmentIntervalBound>(&payload);
                 return bound != nullptr && bound->material == concrete.material;
+            } else {
+                return false;
             }
         },
         action.payload);
@@ -472,6 +475,10 @@ FeasibilityResult evaluate_feasibility(
     const FactoryState& state,
     const Action& action,
     const ConstraintRegistry& registry) {
+    if (is_post_tour_action(action)) {
+        throw std::invalid_argument(
+            "post-tour logistics action requires the post-tour feasibility gate");
+    }
     FeasibilityResult result;
     result.evaluations.reserve(registry.constraints().size());
 

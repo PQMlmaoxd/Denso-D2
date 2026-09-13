@@ -595,6 +595,35 @@ is an explicit no-feasible-option report, never a fabricated
 recommendation. This rule is a conservative pre-tour default and is a
 Factory-Tour confirmation item, not a settled preference.
 
+\paragraph{Post-tour logistics specialization.}
+The executable logistics slice keeps the generic gate unchanged and applies
+the same three-valued semantics in two explicit phases. Its typed
+single-action catalog is $a_0$, prioritize a transport task, assign a task to
+an AMR, reassign a task between AMRs, and select an alternate route. Candidate
+order is canonical by family and typed identifier, independent of container
+insertion order. Pre-simulation admission verifies only snapshot-evaluable
+hard constraints; a hard violation or missing required static evidence is not
+simulated. For an admitted action $a$, post-simulation evidence is scoped by
+the tuple
+\[
+(\text{snapshot id},\text{snapshot version},a,\omega,r,
+  \text{model version}).
+\]
+An identity mismatch is an input error, not a feasibility observation.
+Missing required post-simulation evidence yields \textsc{Unknown}, a verified
+hard violation yields \textsc{Infeasible}, and only final
+\textsc{Feasible} outcomes enter comparison. Battery thresholds, deadline
+lead times, compatibility evidence, dynamic limits, and the KPI preference
+remain explicit caller-owned inputs; this specialization encodes no
+factory-specific value or objective weight. The no-action alternative passes
+through the same simulation and post-gate path, and a policy tie retains the
+status quo. If final $a_0$ evidence is \textsc{Unknown}, the pipeline reports
+a distinct baseline-evidence-unknown status and makes no recommendation; this
+is not the same claim as ``no feasible option.'' The built-in post-tour test
+policy ignores optional cost and forms a total preorder over finite
+throughput, lead-time, lateness, and WIP outcomes. This is synthetic test
+machinery, not a DENSO KPI hierarchy.
+
 For small discrete candidate sets, enumeration with statistically careful
 comparison is the methodologically indicated choice
 \cite{amaran2016simulation,kleywegt2002saa}; recent results show that for
@@ -821,16 +850,16 @@ report's honest limit is that it is a pre-tour artifact: it defines how a
 recommendation must be produced and evaluated, not what DENSO's plant will
 actually require.
 
-The Baseline 0--2 pipeline is implemented and tested in the C++ core
+The generic and post-tour logistics Baseline 0--2 pipelines are implemented
+and tested in the C++ core
 (`\texttt{cpp/}`): an explicit no-action baseline evaluated through the
-same simulation boundary as every candidate, a generic rule-based
-candidate generator, and greedy enumeration under an explicitly synthetic
-test preference policy --- differential-tested against a tiny exhaustive
-oracle on the named synthetic scenarios. No final optimizer, heuristic, or
-native search kernel is attempted before the tour; the next integration
-step is an action-capable simulator from the simulation owner, so that
-candidates can be evaluated against a real Digital-Twin boundary instead
-of the current test double.
+same simulation boundary as every candidate, explicit rule-triggered and
+catalog candidate generators, and greedy enumeration under an explicitly
+synthetic test preference policy --- differential-tested against a tiny
+exhaustive selection oracle. The logistics pipeline consumes action-scoped evidence
+through a test seam pending an action-capable simulator from the simulation
+owner. No final optimizer, heuristic, solver, or native search kernel is
+attempted, and no synthetic test result is a DENSO performance claim.
 
 %======================================================================
 \appendix
